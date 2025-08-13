@@ -70,23 +70,24 @@ open class VertxNioAsyncHttpClient : SdkAsyncHttpClient {
           if (res.failed()) {
             responseHandler.onError(res.cause())
             fut.completeExceptionally(res.cause())
+          } else {
+            val vResponse: HttpClientResponse = res.result()
+            val builder =
+              SdkHttpResponse
+                .builder()
+                .statusCode(vResponse.statusCode())
+                .statusText(vResponse.statusMessage())
+            vResponse.headers().forEach(
+              Consumer { e: MutableMap.MutableEntry<String?, String?>? ->
+                builder.appendHeader(
+                  e!!.key,
+                  e.value,
+                )
+              },
+            )
+            responseHandler.onHeaders(builder.build())
+            responseHandler.onStream(ReadStreamPublisher<Buffer?>(vResponse, fut))
           }
-          val vResponse: HttpClientResponse = res.result()
-          val builder =
-            SdkHttpResponse
-              .builder()
-              .statusCode(vResponse.statusCode())
-              .statusText(vResponse.statusMessage())
-          vResponse.headers().forEach(
-            Consumer { e: MutableMap.MutableEntry<String?, String?>? ->
-              builder.appendHeader(
-                e!!.key,
-                e.value,
-              )
-            },
-          )
-          responseHandler.onHeaders(builder.build())
-          responseHandler.onStream(ReadStreamPublisher<Buffer?>(vResponse, fut))
         }
         val publisher = asyncExecuteRequest.requestContentPublisher()
         if (publisher != null) {
