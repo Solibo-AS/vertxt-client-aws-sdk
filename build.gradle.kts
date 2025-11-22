@@ -8,10 +8,10 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import org.jmailen.gradle.kotlinter.tasks.LintTask
 import kotlin.jvm.java
 
-val vertxVersion = "5.0.2"
-val awsSdkVersion = "2.32.19"
-val junit5Version = "5.8.2"
-val logbackVersion = "1.5.18"
+val vertxVersion = "5.0.5"
+val awsSdkVersion = "2.39.2"
+val junit5Version = "6.0.1"
+val logbackVersion = "1.5.21"
 val localstackVersion = "0.2.23"
 
 val branchName = gitBranch()
@@ -24,13 +24,13 @@ repositories {
 
 plugins {
     `java-library`
-    id("com.github.ben-manes.versions") version "0.52.0"
-  id("org.jmailen.kotlinter") version "5.2.0"
-  id("com.adarshr.test-logger") version "4.0.0"
-    id("com.vanniktech.maven.publish") version "0.34.0"
-    id("org.jetbrains.dokka") version "2.0.0"
+    id("com.github.ben-manes.versions") version "0.53.0"
+    id("org.jmailen.kotlinter") version "5.3.0"
+    id("com.adarshr.test-logger") version "4.0.0"
+    id("com.vanniktech.maven.publish") version "0.35.0"
+    id("org.jetbrains.dokka") version "2.1.0"
 
-  kotlin("jvm") version "2.2.0"
+  kotlin("jvm") version "2.2.21"
 }
 
 group = groupValue
