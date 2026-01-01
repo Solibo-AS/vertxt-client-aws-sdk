@@ -64,6 +64,7 @@ open class VertxNioAsyncHttpClient : SdkAsyncHttpClient {
     client.request(options).onComplete { ar ->
       if (ar.failed()) {
         responseHandler.onError(ar.cause())
+        fut.completeExceptionally(ar.cause())
       } else {
         val vRequest: HttpClientRequest = ar.result()
         vRequest.response().onComplete { res ->
@@ -116,7 +117,7 @@ open class VertxNioAsyncHttpClient : SdkAsyncHttpClient {
           .setHost(request.host())
           .setPort(request.port())
           .setURI(createRelativeUri(request.getUri()))
-          .setFollowRedirects(true)
+          .setFollowRedirects(false)
           .setSsl("https" == request.protocol())
       request.headers().forEach { (name: String?, values: MutableList<String?>?) ->
         options.addHeader(
@@ -126,26 +127,15 @@ open class VertxNioAsyncHttpClient : SdkAsyncHttpClient {
           ),
         )
       }
-      options.addHeader(HttpHeaders.CONNECTION, HttpHeaders.KEEP_ALIVE)
+
       return options
     }
 
-    private fun createRelativeUri(uri: URI): String =
-      (if (StringUtils.isEmpty(uri.getPath())) "/" else uri.getPath()) +
-        // AWS requires query parameters to be encoded as defined by RFC 3986.
-        // see https://docs.aws.amazon.com/general/latest/gr/sigv4-create-canonical-request.html
-        // uri.toASCIIString() returns the URI encoded in this manner
-        (
-          if (StringUtils.isEmpty(uri.getQuery())) {
-            ""
-          } else {
-            "?" +
-              uri
-                .toASCIIString()
-                .split("\\?".toRegex())
-                .dropLastWhile { it.isEmpty() }
-                .toTypedArray()[1]
-          }
-        )
+    private fun createRelativeUri(uri: URI): String {
+      val path = uri.rawPath?.takeIf { it.isNotEmpty() } ?: "/"
+      val query = uri.rawQuery?.takeIf { it.isNotEmpty() }?.let { "?$it" } ?: ""
+
+      return path + query
+    }
   }
 }
