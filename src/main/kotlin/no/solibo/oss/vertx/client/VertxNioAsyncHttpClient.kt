@@ -46,11 +46,14 @@ open class VertxNioAsyncHttpClient : SdkAsyncHttpClient {
 
   override fun execute(asyncExecuteRequest: AsyncExecuteRequest): CompletableFuture<Void?> {
     val fut = CompletableFuture<Void?>()
-    if (Context.isOnEventLoopThread()) {
+    val current = Vertx.currentContext()
+
+    if (current != null && current == context) {
       executeOnContext(asyncExecuteRequest, fut)
     } else {
-      context.runOnContext { v: Void? -> executeOnContext(asyncExecuteRequest, fut) }
+      context.runOnContext { executeOnContext(asyncExecuteRequest, fut) }
     }
+
     return fut
   }
 
