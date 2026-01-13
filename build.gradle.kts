@@ -10,7 +10,7 @@ import kotlin.jvm.java
 
 val vertxVersion = "5.0.5"
 val awsSdkVersion = "2.39.2"
-val junit5Version = "6.0.1"
+val junit5Version = "5.11.4"
 val logbackVersion = "1.5.21"
 val localstackVersion = "0.2.23"
 
@@ -54,6 +54,7 @@ dependencies {
     testImplementation("ch.qos.logback:logback-core:$logbackVersion")
     testImplementation("software.amazon.awssdk:aws-sdk-java:$awsSdkVersion")
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:$junit5Version")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 tasks {
@@ -62,7 +63,7 @@ tasks {
   }
 
   "build" {
-    dependsOn("lintKotlin")
+    dependsOn("check", "assemble")
   }
 
   withType<KotlinCompile> {
