@@ -1,7 +1,6 @@
 package no.solibo.oss.vertx.client
 
 import io.netty.buffer.Unpooled
-import io.vertx.core.Handler
 import io.vertx.core.Vertx
 import io.vertx.core.buffer.Buffer
 import io.vertx.core.http.HttpServer
@@ -17,7 +16,6 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
 import org.reactivestreams.Publisher
 import software.amazon.awssdk.core.internal.http.async.SimpleHttpContentPublisher
-import software.amazon.awssdk.http.ContentStreamProvider
 import software.amazon.awssdk.http.SdkHttpFullRequest
 import software.amazon.awssdk.http.SdkHttpMethod
 import software.amazon.awssdk.http.SdkHttpRequest
@@ -29,8 +27,10 @@ import software.amazon.awssdk.http.async.SimpleSubscriber
 import java.io.ByteArrayInputStream
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import java.util.function.Consumer
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 @ExtendWith(VertxExtension::class)
 class AsyncHttpClientTest {
@@ -156,9 +156,90 @@ class AsyncHttpClientTest {
     }
   }
 
+  @Test
+  @Timeout(value = 15, timeUnit = TimeUnit.SECONDS)
+  fun testConcurrentHeaderMutationDoesNotCrash(ctx: VertxTestContext) {
+    val headerValues = mutableListOf("base")
+    val headers = mutableMapOf("x-test" to headerValues)
+    val baseRequest =
+      SdkHttpRequest
+        .builder()
+        .protocol(SCHEME)
+        .host(HOST)
+        .port(PORT)
+        .method(SdkHttpMethod.GET)
+        .build()
+    val request = MutableHeadersRequest(baseRequest, headers)
+    val running = AtomicBoolean(true)
+    val completed = AtomicInteger(0)
+    val executor = Executors.newSingleThreadExecutor()
+
+    executor.submit {
+      while (running.get()) {
+        headerValues.add("extra")
+        if (headerValues.size > 3) {
+          headerValues.removeAt(1)
+        }
+      }
+    }
+
+    server!!.requestHandler { req: HttpServerRequest? ->
+      ctx.verify {
+        Assertions.assertEquals("base", req!!.getHeader("x-test"))
+      }
+      req!!.response().end("ok")
+    }
+    server!!.listen(PORT, HOST).onComplete { res ->
+      assertTrue(res.succeeded())
+      repeat(200) {
+        client!!.execute(
+          AsyncExecuteRequest
+            .builder()
+            .request(request)
+            .responseHandler(
+              object : SdkAsyncHttpResponseHandler {
+                override fun onHeaders(headers: SdkHttpResponse) {
+                  Assertions.assertEquals(200, headers.statusCode())
+                }
+
+                override fun onStream(stream: Publisher<ByteBuffer?>) {
+                  stream.subscribe(
+                    SimpleSubscriber { body: ByteBuffer? ->
+                      Assertions.assertEquals(
+                        "ok",
+                        Unpooled.wrappedBuffer(body).toString(StandardCharsets.UTF_8),
+                      )
+                      if (completed.incrementAndGet() == 200) {
+                        running.set(false)
+                        executor.shutdownNow()
+                        ctx.completeNow()
+                      }
+                    },
+                  )
+                }
+
+                override fun onError(error: Throwable?) {
+                  running.set(false)
+                  executor.shutdownNow()
+                  ctx.failNow(error)
+                }
+              },
+            ).build(),
+        )
+      }
+    }
+  }
+
   companion object {
     private const val PORT = 8000
     private const val HOST = "localhost"
     private const val SCHEME = "http"
+  }
+
+  private class MutableHeadersRequest(
+    private val delegate: SdkHttpRequest,
+    private val headers: MutableMap<String, MutableList<String>>,
+  ) : SdkHttpRequest by delegate {
+    override fun headers(): MutableMap<String, MutableList<String>> = headers
   }
 }
