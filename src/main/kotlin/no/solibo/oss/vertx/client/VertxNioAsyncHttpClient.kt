@@ -122,13 +122,19 @@ open class VertxNioAsyncHttpClient : SdkAsyncHttpClient {
           .setURI(createRelativeUri(request.getUri()))
           .setFollowRedirects(false)
           .setSsl("https" == request.protocol())
-      request.headers().forEach { (name: String?, values: MutableList<String?>?) ->
-        options.addHeader(
-          name,
-          values!!.stream().map<CharSequence?> { s: String? -> s as CharSequence? }.collect(
-            Collectors.toList(),
-          ),
-        )
+      request.headers().forEach { (name, values) ->
+        val list = mutableListOf<String>()
+        for (i in 0 until values.size) {
+          try {
+            val v = values[i]
+            if (v != null) {
+              list.add(v.toString())
+            }
+          } catch (e: Exception) {
+            // Ignore issues with concurrent mutation
+          }
+        }
+        options.addHeader(name, list)
       }
 
       return options
