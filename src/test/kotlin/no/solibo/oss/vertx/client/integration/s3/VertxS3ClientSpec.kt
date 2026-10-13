@@ -243,8 +243,7 @@ internal class VertxS3ClientSpec : LocalStackBaseSpec() {
             )
             if (received.length().toLong() == fileSize) ctx.completeNow()
 
-            return Future
-              .succeededFuture<Void?>()
+            return Future.succeededFuture()
           }
 
           override fun setWriteQueueMaxSize(maxSize: Int): WriteStream<Buffer?>? = null
