@@ -21,6 +21,7 @@ import software.amazon.awssdk.utils.StringUtils
 import java.net.URI
 import java.util.Objects
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.function.Consumer
 import java.util.stream.Collectors
 
@@ -28,6 +29,7 @@ open class VertxNioAsyncHttpClient : SdkAsyncHttpClient {
   private val context: Context
   private val client: HttpClient
   private val clientOptions: HttpClientOptions?
+  private val closed = AtomicBoolean(false)
 
   constructor(context: Context) {
     this.context = context
@@ -46,35 +48,70 @@ open class VertxNioAsyncHttpClient : SdkAsyncHttpClient {
 
   override fun execute(asyncExecuteRequest: AsyncExecuteRequest): CompletableFuture<Void?> {
     val fut = CompletableFuture<Void?>()
-    val current = Vertx.currentContext()
 
-    if (current != null && current == context) {
-      executeOnContext(asyncExecuteRequest, fut)
-    } else {
-      context.runOnContext { executeOnContext(asyncExecuteRequest, fut) }
+    if (closed.get()) {
+      fail(asyncExecuteRequest, fut, IllegalStateException(CLOSED_MESSAGE))
+      return fut
+    }
+
+    try {
+      val current = Vertx.currentContext()
+      if (current != null && current == context) {
+        guardedExecuteOnContext(asyncExecuteRequest, fut)
+      } else {
+        context.runOnContext { guardedExecuteOnContext(asyncExecuteRequest, fut) }
+      }
+    } catch (t: Throwable) {
+      // runOnContext can reject the task, e.g. when Vert.x is shutting down.
+      fail(asyncExecuteRequest, fut, t)
     }
 
     return fut
+  }
+
+  /**
+   * Runs [executeOnContext] and turns anything it throws into a failed request.
+   *
+   * Without this, a synchronous throw (for example vertx-core's
+   * `IllegalStateException("Client is closed")` from `HttpClient.request` once the
+   * underlying Vert.x client has been closed) escapes to the context's
+   * unhandled-exception handler and the SDK's future never completes, so the
+   * calling AWS client hangs.
+   */
+  private fun guardedExecuteOnContext(
+    asyncExecuteRequest: AsyncExecuteRequest,
+    fut: CompletableFuture<Void?>,
+  ) {
+    try {
+      executeOnContext(asyncExecuteRequest, fut)
+    } catch (t: Throwable) {
+      fail(asyncExecuteRequest, fut, t)
+    }
   }
 
   open fun executeOnContext(
     asyncExecuteRequest: AsyncExecuteRequest,
     fut: CompletableFuture<Void?>,
   ) {
+    if (closed.get()) {
+      throw IllegalStateException(CLOSED_MESSAGE)
+    }
     val request = asyncExecuteRequest.request()
     val responseHandler = asyncExecuteRequest.responseHandler()
     val options: RequestOptions = getRequestOptions(request)
     client.request(options).onComplete { ar ->
       if (ar.failed()) {
-        responseHandler.onError(ar.cause())
-        fut.completeExceptionally(ar.cause())
-      } else {
-        val vRequest: HttpClientRequest = ar.result()
+        fail(asyncExecuteRequest, fut, ar.cause())
+        return@onComplete
+      }
+      val vRequest: HttpClientRequest = ar.result()
+      try {
         vRequest.response().onComplete { res ->
           if (res.failed()) {
-            responseHandler.onError(res.cause())
-            fut.completeExceptionally(res.cause())
-          } else {
+            fail(asyncExecuteRequest, fut, res.cause())
+            return@onComplete
+          }
+          try {
             val vResponse: HttpClientResponse = res.result()
             val builder =
               SdkHttpResponse
@@ -91,6 +128,8 @@ open class VertxNioAsyncHttpClient : SdkAsyncHttpClient {
             )
             responseHandler.onHeaders(builder.build())
             responseHandler.onStream(ReadStreamPublisher<Buffer?>(vResponse, fut))
+          } catch (t: Throwable) {
+            fail(asyncExecuteRequest, fut, t)
           }
         }
         val publisher = asyncExecuteRequest.requestContentPublisher()
@@ -99,15 +138,44 @@ open class VertxNioAsyncHttpClient : SdkAsyncHttpClient {
         } else {
           vRequest.end()
         }
+      } catch (t: Throwable) {
+        runCatching { vRequest.reset(0, t) }
+        fail(asyncExecuteRequest, fut, t)
       }
     }
   }
 
+  /**
+   * Closes the underlying Vert.x HTTP client. Safe to call more than once; requests
+   * executed afterwards fail fast instead of reaching the closed Vert.x client.
+   */
   override fun close() {
-    client.close()
+    if (closed.compareAndSet(false, true)) {
+      client.close()
+    }
+  }
+
+  private fun fail(
+    asyncExecuteRequest: AsyncExecuteRequest,
+    fut: CompletableFuture<Void?>,
+    error: Throwable,
+  ) {
+    if (fut.isDone) {
+      return
+    }
+    try {
+      asyncExecuteRequest.responseHandler().onError(error)
+    } catch (handlerError: Throwable) {
+      if (handlerError !== error) {
+        error.addSuppressed(handlerError)
+      }
+    }
+    fut.completeExceptionally(error)
   }
 
   companion object {
+    private const val CLOSED_MESSAGE = "VertxNioAsyncHttpClient is closed"
+
     private val DEFAULT_CLIENT_OPTIONS: HttpClientOptions? =
       HttpClientOptions()
         .setSsl(true)
