@@ -3,20 +3,21 @@ import com.github.benmanes.gradle.versions.updates.resolutionstrategy.ComponentS
 import org.gradle.kotlin.dsl.withType
 import com.vanniktech.maven.publish.KotlinJvm
 import com.vanniktech.maven.publish.JavadocJar
+import com.vanniktech.maven.publish.SourcesJar
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import org.jmailen.gradle.kotlinter.tasks.LintTask
 import kotlin.jvm.java
 
-val vertxVersion = "5.0.5"
-val awsSdkVersion = "2.39.2"
-val junit5Version = "5.11.4"
-val logbackVersion = "1.5.21"
+val vertxVersion = "5.1.6"
+val awsSdkVersion = "2.54.7"
+val junitVersion = "6.1.3"
+val logbackVersion = "1.6.5"
 val localstackVersion = "0.2.23"
 
 val branchName = gitBranch()
 val groupValue: String = "no.solibo.oss"
-val versionValue: String = calculateVersion(properties["version"] as String, branchName)
+val versionValue: String = calculateVersion(providers.gradleProperty("version").get(), branchName)
 
 repositories {
   mavenCentral()
@@ -24,13 +25,13 @@ repositories {
 
 plugins {
     `java-library`
-    id("com.github.ben-manes.versions") version "0.53.0"
-    id("org.jmailen.kotlinter") version "5.3.0"
+    id("io.github.ben-manes.versions") version "0.66.0"
+    id("org.jmailen.kotlinter") version "5.7.0"
     id("com.adarshr.test-logger") version "4.0.0"
-    id("com.vanniktech.maven.publish") version "0.35.0"
-    id("org.jetbrains.dokka") version "2.1.0"
+    id("com.vanniktech.maven.publish") version "0.37.0"
+    id("org.jetbrains.dokka") version "2.2.0"
 
-  kotlin("jvm") version "2.2.21"
+  kotlin("jvm") version "2.4.21"
 }
 
 group = groupValue
@@ -53,8 +54,14 @@ dependencies {
     testImplementation("ch.qos.logback:logback-classic:$logbackVersion")
     testImplementation("ch.qos.logback:logback-core:$logbackVersion")
     testImplementation("software.amazon.awssdk:aws-sdk-java:$awsSdkVersion")
-    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:$junit5Version")
+    testImplementation(platform("org.junit:junit-bom:$junitVersion"))
+    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+java {
+  sourceCompatibility = JavaVersion.VERSION_21
+  targetCompatibility = JavaVersion.VERSION_21
 }
 
 tasks {
@@ -73,8 +80,6 @@ tasks {
       suppressWarnings.set(true)
       freeCompilerArgs.addAll(listOf(
         "-opt-in=kotlin.RequiresOptIn",
-        "-Xcontext-parameters",
-        "-Xwhen-guards",
       ))
     }
   }
@@ -132,7 +137,7 @@ mavenPublishing {
 
   configure(KotlinJvm(
     javadocJar = JavadocJar.Dokka("dokkaGenerateHtml"),
-    sourcesJar = true,
+    sourcesJar = SourcesJar.Sources(),
   ))
 
   publishToMavenCentral(automaticRelease = true)
@@ -146,9 +151,11 @@ fun calculateVersion(version: String, branch: String): String = when {
   else -> "$version-$branch"
 }
 
-fun gitBranch(): String = System.getenv("BRANCH_NAME") ?:
-Runtime.getRuntime().exec(arrayOf("git", "rev-parse", "--abbrev-ref", "HEAD"))
-  .inputStream
-  .bufferedReader()
-  .readText()
-  .trim()
+fun gitBranch(): String =
+  providers.environmentVariable("BRANCH_NAME").orNull
+    ?: providers
+      .exec { commandLine("git", "rev-parse", "--abbrev-ref", "HEAD") }
+      .standardOutput
+      .asText
+      .get()
+      .trim()

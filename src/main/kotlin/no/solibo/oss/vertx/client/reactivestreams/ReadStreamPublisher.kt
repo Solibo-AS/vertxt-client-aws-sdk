@@ -33,6 +33,9 @@ class ReadStreamPublisher<T : Buffer?>
         future?.complete(null)
       }
       stream.handler { buff: T? -> s.onNext(ByteBuffer.wrap(buff!!.getBytes())) }
-      stream.exceptionHandler { throwable: Throwable? -> s.onError(throwable) }
+      stream.exceptionHandler { throwable: Throwable? ->
+        s.onError(throwable)
+        future?.completeExceptionally(throwable ?: IllegalStateException("Response stream failed"))
+      }
     }
   }
